@@ -1,0 +1,208 @@
+---
+title: "Final Project"
+author: "Robbie Sucholeiki"
+date: "5/22/2021"
+output: html_document
+---
+## Introduction and Background
+Amyotrophic Lateral Sclerosis (ALS) is a disease that affects over 5600 new patients each year and has no known cure. People with ALS die within 3-5 years of diagnosis. While there is no definitive knowledge about what causes the disease, a small number of ALS patients (~5%) have a genetic mutation in the SOD1 gene which causes the SOD1 protein to misfold and precipitate in motor neurons. To better understand this aspect of the disease, mice have been genetically modified to overexpress the SOD1 protein, causing them to exhibit similar shortened life-span and symptoms to people. The SOD1 mouse model is used to test various experimental therapies before applying them to clinical trials. 
+
+The data analyzed this project was taken from a SOD1 mouse model experiment in 128 mice total. The goal of the study was to test the ability of an experimental drug, *Compound X*, to improve the life-span of SOD1 mice when compared to control. The data was taken with permission from the original publishers, with names removed for confidentiality. 
+
+The mice in the model were divided into several groups. 32 mice were "Wild Type" or mice that did not express the SOD1 gene. All of these mice lived to the end of the study. The remaining mice expressed the SOD1 gene. One group of SOD1 mice were dosed with vehicle (a control of sugar in water) and the remainder were dosed with the experimental drug Compound X. The survival times of all mice in the study were recorded. 
+
+##Variable Selection
+To begin studying the efficacy of Compound X in the mouse model, explanatory and response variables must be chosen. In this analysis, the *explanatory* variable will be the mouse treatment (vehicle/control or experimental drug). The *response* variable is mouse survival, measured in days. "Compound X" and "experimental drug" will be used synonymously in this report. 
+
+In the experiment, different groups of mice were dosed both once per day and twice per day with vehicle and drug. This analysis will focus specificly on the mice groups dosed once per day. Thus, total dosage is kept as a control. 
+
+Equal numbers of both male and female mice were included in the study. The sex of the mouse could have an impact on its survival time. Therefore, this acts as another possible explanatory variable, or *covariate*. The impact of the mouse's sex on survival is explored later in this report.
+
+##Organization of Analysis
+This report will be organized into several sections. First the survival data will be loaded in and then filtered for the necessary data. Survival times of the mouse groups will be visually displayed in a box plot. Following this, a t-test will be used to compare the mean survival times of vehicle and drug-dosed mice. A log rank test will be also be used to compare survival probability curves for both groups. 
+
+A second section of the report will focus on the potential impact of mouse sex on survival time. This section will divide up the male and female mice for both the vehicle and drug-dosed groups and then compare their survival probability curves via a log rank test. 
+
+Finally, results will be discussed in a conclusion section at the end of the report. 
+
+#PART 1: Downloading and filtering data, visual analysis, T-test and log rank test. 
+
+#Download data
+The code below downloads the mouse survival data as a .csv file. It also downloads R packages used in data filtering and plotting. 
+```{r}
+library(tidyverse)
+library(survival)
+library(survminer)
+
+survival_data<- read.csv(file = "Mouse_Survival_Data.csv", header = TRUE) #Read in survival data file
+```
+
+#Filtering Data
+The code below filters the imported data frame to extract only single dose data. It also renames some of the mouse groups in the frame for clarity.
+
+It should be noted that male and female mice were dosed with different quantities of Compound X in the study (350 mg/kg and 200 mg/kg respectively). This was due to a previous study that showed that these two dosages were equipotent in male and female mice, respectively, due to differences of metabolism among the two groups.
+```{r}
+#Filter the data frame to extract data for only single dosage (SID) with compound and vehicle. 
+single_dose_data <- survival_data %>%
+  filter(Treatment == "WT_Vehicle_SID" | Treatment == "SOD1_veh_SID" | Treatment == "SOD1_SID_350mg/kg" | Treatment == "SOD1_SID_200mg/kg")
+
+#Rename data for clarity
+single_dose_data[single_dose_data == "WT_Vehicle_SID"]<- "Vehicle, WT Mice" #These mice are wild type dosed with vehicle
+single_dose_data[single_dose_data == "SOD1_veh_SID"]<- "Vehicle, SOD1 Mice" #These mice are SOD1 mutants dosed with vehicle
+single_dose_data[single_dose_data == "SOD1_SID_350mg/kg"]<- "Drug, SOD1 Males" #These mice are SOD1 males dosed with 350mg/kg compound
+single_dose_data[single_dose_data == "SOD1_SID_200mg/kg"]<- "Drug, SOD1 Females" #These mice are SOD1 females dosed with 200 mg/kg compound
+```
+
+#Initial Visualization of Data
+The code below organizes the data and graphs a box plot that compares the survival times of SOD1 mice dosed with Compound X (red) and SOD1 mice dosed with vehicle (blue). Individual data values are included as plotted points. The drug dosed group contains 32 mice (16 males and 16 females). The vehicle group contains 16 mice (8 males and 8 females). 
+
+From a preliminary visual scan, we can see that the experimental drug group seems to be skewed toward longer survival times compared to vehicle control. However, statistical tests are necessary to determine whether these differences are statistically significant. 
+```{r}
+#Create a box plot to visualize differences in longevity between SOD1 mice dosed with vehicle and SOD1 mice dosed with Compound X. 
+
+#Filter the frame into data containing only SOD1 mice 
+compound_vs_vehicle <- single_dose_data %>%
+  filter(Treatment == "Vehicle, SOD1 Mice" | Treatment == "Drug, SOD1 Males" | Treatment == "Drug, SOD1 Females") %>%
+  select(Days.lived, Treatment, Sex, Status) #Filter the survival data for SOD1 mice treated with vehicle and Compound X. 
+
+#Combine SOD1 males and females into one group
+compound_vs_vehicle[compound_vs_vehicle == "Drug, SOD1 Males"]<- "Drug, SOD1 Mice" #Rename males dosed with Compound X to combine all experimental dosing into one group
+compound_vs_vehicle[compound_vs_vehicle == "Drug, SOD1 Females"]<- "Drug, SOD1 Mice" #Rename females dosed with Compound X to combine all experimental dosing into one group
+
+plot <- ggplot(compound_vs_vehicle, aes(x=Treatment, y=Days.lived, fill=Treatment)) + geom_boxplot() +  
+labs(title="Days Lived for Different Treatment Groups",x="Treatment Group", y = "Days Lived")
+
+plot + geom_jitter(shape=16, position=position_jitter(0.2)) + theme_classic()
+```
+
+#T-test of mean survival times
+The code below organizes the data and then performs a Welch's T-Test to compare the mean survival times of the drug dosed mouse group and the vehicle mouse group. 
+
+Our *null hypothesis* for this T-Test is that mouse survival is independent of their treatment (dosing of either vehicle or compound). We can set an alpha value of .05. 
+
+There are several assumptions that must be made when working with the T-Test. First, the sample size must be sufficiently large. Past studies of mouse models have recommended a sample size of upwards of 10 mice per group, which conforms to this set of data. The second assumption is that the data must be picked from a "statistical random sample"; while we are confined to a limit set of mice due to resource constraints, none of the data has been cherrypicked. A third assumption is that the data compared should conform to a normal distribution; this is affirmed in the next section. Finally, the Welch's T-Test does not require a homogeneity of variance. 
+
+```{r}
+#Perform a t-test to compare the mean longevity of SOD1 mice dosed with vehicle and SOD1 mice dosed with Compound X.
+
+#Establish the groups of mice to compare
+SOD1_vehicle_survival <- compound_vs_vehicle %>%
+  filter(Treatment == "Vehicle, SOD1 Mice") %>%
+  select(Days.lived, Treatment) #Filter the survival data for SOD1 mice treated with vehicle
+SOD1_drug_survival <- compound_vs_vehicle %>%
+  filter(Treatment ==  "Drug, SOD1 Mice") %>%
+  select(Days.lived, Treatment) #Filter the survival data for SOD1 mice treated with Compound X. 
+
+t_test<- t.test(SOD1_vehicle_survival$Days.lived,SOD1_drug_survival$Days.lived) #Perform a t-test to compare the mean longevity. 
+
+cat("The p-value for this t-test is: ")
+print(t_test$p.value) #Report the p-value.
+```
+
+#T-Test results and verification of assumptions.
+The Welch's T-Test returns a p-value of .0377. This value is less than our alpha value, so test would lead us to *reject* our null hypothesis. The T-Test would indicate that mouse survival and treatment dosing are not independent.
+
+We can also verify our assumption of normality of data compared by running a shapiro test in R. The null hypothesis here is that our data groups conform to a normal distribution. Both p values returned are greater than an alpha value of .05, indicating normality of the distributions. 
+
+```{r}
+#Verify assumptions for the T test by checking for normality of data distribution
+shapiro.test(SOD1_vehicle_survival$Days.lived)
+shapiro.test(SOD1_drug_survival$Days.lived)
+```
+
+#Log Rank Test of Kaplan Meier Survival Curves
+Another test that is often used in survival studies in the log rank test. This test compares survival probability curves of two mouse groups, which are graphed and calculated from the times of mouse deaths over the course of the study. The null hypothesis is once again that there is no difference in survival between the two groups (dosing and survival are independent).
+
+The code below plots survival probability curves for vehicle and drug dosed groups (blue and red, respectively), and returns a p value. 
+
+The assumptions of a log rank test are as follows: 
+1) Censoring of data (removal of mice from the study) must be unrelated to succumbing to our studied effect, and that relatively consistent proportions of mice must censored in both groups, if any. No mice were censored in our groups compared. 
+2) Survival probabilities are the same for subjects recruited early and late in the study. 
+3) The events (in this case death of the mouse) happened at the times specified. 
+
+```{r}
+#Create Kaplan-Meier curves to compare the longevity of SOD1 mice dosed with vehicle and SOD1 mice dosed with Compound X.  
+
+#Fit survivial data using the Kaplan-Meier method
+surv_object <- Surv(time = compound_vs_vehicle$Days.lived, event = compound_vs_vehicle$Status) 
+fit1<- survfit(surv_object ~ Treatment, data = compound_vs_vehicle)
+
+#Plot the survival curves and calculate p-value
+ggsurvplot(fit1, data = compound_vs_vehicle, pval = TRUE) +
+  ggtitle("Survival Curves for Drug and Vehicle SOD1 Mice")
+```
+#Log Rank Test results
+Comparison of the survival probability curves for the two treatment groups returns a p = value of .12, which indicates *non-rejection* of our null hypothesis when compared to an alpha value of .05. 
+
+When compared to the T-Test, this highlights an interesting conundrum of survival studies. Namely, different statistical tests can often return different results with regards to statistical significance of treatment dosing. This will be discussed in more detail in our conclusion. 
+
+#PART 2: Log rank test with sex diffrentiated, analysis of mouse sex covariate
+As stated in the introduction, there is the possibility for the sex of the mouse to have an effect on its survival, especially when combined with experimental treatments. The previous statistical tests compared mouse groups that had equal numbers of males and females combined in each group. In this next section, we will separate male and female data to see if mouse sex is influencing survival. 
+
+#Graphing two survival curves and log rank tests
+The code below graphs performs two log rank tests of sets of survival curves that can be compared. The *first* log rank test is performed for male mice dosed with vehicle compared to female mice dosed with vehicle. The *second* log rank test is performed for male mice dosed with Compound X compared to female mice dosed with compound X. P values are generated for each test, to be compared to an alpha value of .05. 
+
+Our null hypothesis for these tests is that mouse survival is independent of mouse sex. 
+
+```{r}
+#GRAPH A: Create Kaplan Meier Curves to compare the mean longevity of male and female SOD1 mice dosed with vehicle. 
+
+#Filter data by labeling vehicle dosed SOD1 males in a new data frame
+male_vehicle <- single_dose_data %>%
+  filter(Treatment == "Vehicle, SOD1 Mice", Sex == "MALE") %>%
+  select(Days.lived, Sex, Treatment, Status)
+male_vehicle[male_vehicle == "Vehicle, SOD1 Mice"]<- "SOD1 Males" 
+
+#Filter data by labeling vehicle dosed SOD1 females in a few data frame
+female_vehicle <-single_dose_data %>%
+  filter(Treatment == "Vehicle, SOD1 Mice", Sex == "FEMALE") %>%
+  select(Days.lived, Sex, Treatment, Status)
+female_vehicle[female_vehicle == "Vehicle, SOD1 Mice"]<- "SOD1 Females" 
+
+#Combine into a new data frame that differentiates vehicle dosed SOD1 males and females. 
+male_female_vehicle<-rbind(male_vehicle, female_vehicle)
+
+#Fit survivial data using the Kaplan-Meier method
+surv_object <- Surv(time = male_female_vehicle$Days.lived, event = male_female_vehicle$Status) 
+fit1<- survfit(surv_object ~ Treatment, data = male_female_vehicle)
+
+#Plot the survival curves and calculate p-value
+ggsurvplot(fit1, data = male_female_vehicle, pval = TRUE) +
+  ggtitle("Survival Curves for Vehicle SOD1 Mice")
+
+
+#GRAPH B: Create Kaplan Meier Curves to compare the mean longevity of male and female SOD1 mice dosed with Compound X. 
+
+#Filter data for drug dosed SOD1 males and females and label for clarity,
+male_female_compound<- single_dose_data %>%
+  filter(Treatment == "Drug, SOD1 Males" | Treatment == "Drug, SOD1 Females") %>%
+select(Days.lived, Sex, Treatment, Status)
+male_female_compound[male_female_compound == "Drug, SOD1 Males"]<- "SOD1 Males"
+male_female_compound[male_female_compound == "Drug, SOD1 Females"]<- "SOD1 Females"
+
+#Fit survivial data using the Kaplan-Meier method
+surv_object <- Surv(time = male_female_compound$Days.lived, event = male_female_compound$Status) 
+fit1<- survfit(surv_object ~ Treatment, data = male_female_compound)
+
+#Plot the survival curves and calculate p-value
+ggsurvplot(fit1, data = male_female_compound, pval = TRUE) +
+  ggtitle("Survival Curves for Drug SOD1 Mice")
+```
+#Log rank test results
+Among vehicle SOD1 male vs female mice, the log rank test reports a p value of .46, indicating *non-rejection* of the null hypothesis. However, among drug dosed male vs female mice, the log rank test reports a p value of .03, indicating a *rejection* of the null hypothesis. 
+
+Our independence hypothesis holds true for vehicle dosed male and female mice. But among mice dosed with Compound X, is is apparent that mouse sex and survival are no longer independent. That is, when mice are dosed with the experimental drug, sex has a statistically significant impact on survival. A potential explanation for this result is detailed in the conclusion section below. 
+
+#PART 3: Conclusion
+To summarize our findings from Part 1, we began with a null hypothesis that mouse survival and treatment of drug are independent. A T-test of mean survival times returned a rejection of the null hypothesis, while a log rank test of survival probability curves returned a non-rejection of the null hypothesis. 
+
+The different results of these tests may be due to the mechanisms of the tests themselves. The Welch's t-test purely compares the mean survival of the two groups along with a comparison of their variance. The log rank test takes a different approach. It functions by calculating the "expected number" of deaths in each group if there were in reality no difference between the groups, then compares this statistic to the observed deaths in each group. It is quite possible for these two tests to return different significant results for a common set of data. 
+
+Among mouse survival studies, the log rank test is generally more commonly accepted and used. Were this a formal report, the log-rank test would likely be utilized here to conclude that mouse survival and dosing treatment are in fact *independent*, and that the effects of the experimental compound are not statistically significant. However, there is certainly ample opportunity for a follow up model to verify these findings. 
+
+Another interesting finding to comment upon is the *sex difference in survival* observed in Part 2 when mice were dosed with Compound X, but not with vehicle control. The fact that these effects were not observed in the vehicle suggest a real effect connected to oral dosing with Compound X. It is possible that certain hormones in female mice, but not males, may have a synergistic effect with Compound X in slowing disease progression. For example, a 2017 study by Riar and colleagues (citation below) found that certain mitochondrial proteins could be activated in females but not males in an SOD1 mouse model, suggesting differences in disease phenotype that could be accentuated by drug dosing. Overall this finding represents an interesting potential impact of the experimental compound that could be explored further. 
+
+Amanjot K Riar, et. al, Sex specific activation of the ERα axis of 
+  the mitochondrial UPR (UPRmt) in the G93A-SOD1 mouse model of 
+  familial ALS, Human Molecular Genetics, Volume 26, Issue 7, 1 
+  April 2017, Pages 1318–1327, https://doi.org/10.1093/hmg/ddx049
